@@ -380,3 +380,52 @@ Phase 2에서 별도 메타데이터 대신 컴포넌트 직렬화를 택한 판
 `Connection ... fully established` 가 3회 찍힌 것으로 보아 재접속이 있었고,
 그 시점부터 주기적 동기화가 사라진 플레이어에게 계속 전송을 시도하는 것으로 보인다.
 예외 0건이고 세션은 정상 동작하여 지금은 손대지 않는다. 진단 로그를 묻히게 하는 소음이므로 추후 처리.
+
+---
+
+## 9. Phase 4 실증 — 소유권 전달 경로 3종 (2026-08-01)
+
+빌드 `2026-08-01 20:59 feature/duplicant-ownership@ab95c18`, 양쪽 PC 동일 확인.
+
+호스트:
+```
+12:10:04.040 action=assign netId=-37802731 owner=76561198084204138 type=Duplicant actor=76561199073336502
+```
+
+클라이언트:
+```
+12:02:21.769 action=restore netId=1060217590   type=PrintingPod    <- 세이브 전송
+12:02:22.846 action=restore netId=-1739327875  type=Duplicant      <- 세이브 전송
+12:10:04.127 action=sync    netId=-37802731    type=Duplicant      <- 실시간 패킷
+```
+
+87ms 간격, netId·소유자 일치. **소유권 전달 경로 3종이 모두 검증됐다.**
+
+| 경로 | 대상 | 수단 |
+|---|---|---|
+| `assign` | 호스트가 결정 | 로컬 |
+| `restore` | 세션 시작 전부터 있던 것 | 세이브(로드/전송) |
+| `sync` | 세션 중 생긴 것 | `OwnershipSyncPacket` |
+
+### 부수 확인: 발신자 컨텍스트가 실사용됐다
+
+호스트 로그의 `actor=76561199073336502` 는 **클라이언트가 인쇄를 지시했음**을 호스트가 기록한 것이다.
+Phase 1 의 `PacketContext` 가 진단이 아닌 실제 기록에 쓰인 첫 사례이며, 권한 검사가 읽을 값이 바로 이것이다.
+
+### upstream 버그: ScheduleAssignmentPacket
+
+```
+[GameClient] Failed to handle incoming packet: System.NullReferenceException
+  at ONI_Together.Networking.Packets.Social.ScheduleAssignmentPacket.Apply()
+```
+
+복제체 인쇄 직후 발생. **우리가 소유권 패킷에서 대비한 것과 동일한 경합**이다 —
+호스트가 새 복제체에 대한 패킷을 보냈는데 클라이언트에 아직 그 객체가 없다.
+upstream 은 이 경우를 처리하지 않는다.
+
+같은 순간 `OwnershipSyncPacket` 은 10ms 뒤 정상 처리됐다(`action=sync`).
+`_pending` 대기열 설계가 실제로 필요했음이 확인된 셈이다.
+
+전송 계층 `try/catch` 에 잡혀 크래시는 없으나 **클라이언트에서 새 복제체의 스케줄 배정이 실패**한다.
+우리 기능과 무관한 선재 버그이므로 기록만 하고 손대지 않는다.
+고칠 경우 처방은 동일하다: 객체가 없으면 버리지 말고 대기시켰다가 스폰 시 적용.
