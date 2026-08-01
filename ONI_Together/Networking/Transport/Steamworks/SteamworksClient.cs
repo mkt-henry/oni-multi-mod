@@ -158,7 +158,8 @@ namespace ONI_Together.Networking.Transport.Steam
                 try
                 {
                     //DebugConsole.Log($"[GameClient] Processing packet {i+1}/{msgCount}, size: {msg.m_cbSize} bytes, readyToProcess: {PacketHandler.readyToProcess}");
-                    PacketHandler.HandleIncoming(data);
+                    // A client only ever receives host traffic, so the host is the sender.
+                    PacketHandler.HandleIncoming(data, MultiplayerSession.HostUserID);
                 }
                 catch (Exception ex)
                 {

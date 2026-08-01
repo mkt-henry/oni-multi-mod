@@ -180,7 +180,8 @@ namespace ONI_Together.Networking.Transport.Lan
 
                 try
                 {
-                    PacketHandler.HandleIncoming(rawData);
+                    // A client only ever receives host traffic, so the host is the sender.
+                    PacketHandler.HandleIncoming(rawData, MultiplayerSession.HostUserID);
                 }
                 catch (Exception ex)
                 {

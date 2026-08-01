@@ -64,9 +64,14 @@ namespace ONI_Together.Networking.Packets.Core
 			//this packet should only be sent by clients to the host
 			if (MultiplayerSession.IsHost)
 			{
-				//trigger it on the host
-				innerPacket.OnDispatched();
+				//trigger it on the host, attributed to whoever sent the envelope rather than to the envelope itself
+				using (PacketContext.Scope(SenderId))
+				{
+					innerPacket.OnDispatched();
+				}
 				//send it to all other clients except the sender
+				//note: the inner packet is relayed unwrapped, so those clients see it as coming from the host.
+				//that is fine while permission checks live on the host; revisit if clients ever need attribution.
 				PacketSender.SendToAllExcluding(innerPacket, [MultiplayerSession.HostUserID, SenderId]);
 			}
 		}

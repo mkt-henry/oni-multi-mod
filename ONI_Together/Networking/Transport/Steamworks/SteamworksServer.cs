@@ -137,11 +137,34 @@ namespace ONI_Together.Networking.Transport.Steam
                 byte[] bytes = new byte[msg.m_cbSize];
                 Marshal.Copy(msg.m_pData, bytes, 0, msg.m_cbSize);
 
-                PacketHandler.HandleIncoming(bytes);
+                PacketHandler.HandleIncoming(bytes, ResolveSender(msg));
 
                 SteamNetworkingMessage_t.Release(messages[i]);
             }
             scope.End(msgCount, totalBytes);
+        }
+
+        /// <summary>
+        /// Works out which player a message came from so the host can attribute the command.
+        /// Steam normally stamps the peer identity on the message; if it is missing we fall back to
+        /// matching the connection handle against the registered players.
+        /// </summary>
+        private static ulong ResolveSender(SteamNetworkingMessage_t msg)
+        {
+            using var _ = Profiler.Scope();
+
+            ulong steamId = msg.m_identityPeer.GetSteamID64();
+            if (steamId != PacketContext.Unknown)
+                return steamId;
+
+            foreach (var player in MultiplayerSession.ConnectedPlayers.Values)
+            {
+                if (player.Connection is HSteamNetConnection conn && conn == msg.m_conn)
+                    return player.PlayerId;
+            }
+
+            DebugConsole.LogWarning($"[GameServer] Could not attribute an incoming packet to a player (conn={msg.m_conn}). It will be dispatched unattributed.");
+            return PacketContext.Unknown;
         }
 
         private static void OnConnectionStatusChanged(SteamNetConnectionStatusChangedCallback_t data)

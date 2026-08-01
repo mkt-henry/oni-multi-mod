@@ -25,9 +25,23 @@ namespace ONI_Together.Networking.Packets.Architecture
 			}
 		}
 
+		/// <summary>
+		/// Kept for the public mod API. Prefer the overload that supplies the sender - without it the
+		/// packet is dispatched unattributed and any permission check will treat it as untrusted.
+		/// </summary>
 		public static void HandleIncoming(byte[] data)
 		{
+			HandleIncoming(data, PacketContext.Unknown);
+		}
+
+		/// <param name="senderId">
+		/// Player the packet arrived from, as reported by the transport. On a client this is the host.
+		/// Pass <see cref="PacketContext.Unknown"/> only when the transport genuinely cannot attribute it.
+		/// </param>
+		public static void HandleIncoming(byte[] data, ulong senderId)
+		{
 			using var _ = Profiler.Scope();
+			using var senderScope = PacketContext.Scope(senderId);
 
 			if (!_readyToProcess)
 			{
