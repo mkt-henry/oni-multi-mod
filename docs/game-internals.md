@@ -536,3 +536,60 @@ def.Build(cell, Orientation.Neutral, null, def.DefaultElements(), 293.15f,
 `TemplateContainer` 에 `pickupables`, `elementalOres`, `buildings` 가 있으므로
 시작 자원과 팟이 모두 템플릿에 포함될 가능성이 높다. 실제 YAML 은 아직 확인하지 않았다.
 스탬프 후 결과물로 확인하는 편이 빠르다.
+
+---
+
+## 12. Phase 3b 실증 — 플레이어별 시작 구역 (2026-08-01)
+
+빌드 `feature/starting-area-placement@1af57ba`, `podtest` 월드.
+
+```
+[StartingArea] PlayerId(76561199073336502) has no printing pod; placing one.
+[StartingArea] Stamping 'bases/sandstoneBase' at 90, 193
+[StartingArea] Delivered 3 duplicants to PlayerId(76561199073336502)'s new pod.
+[StartingArea] Stamp complete at 90, 193
+```
+
+소유권 최종 상태:
+
+| 플레이어 | 팟 | 복제체 |
+|---|---|---|
+| 76561198084204138 (호스트) | 1 | 3 |
+| 76561199073336502 (클라이언트) | 1 | 3 |
+
+예외 0건. **기획의 핵심 — 한 소행성, 분리된 시작 위치, 각자의 팟과 복제체 — 이 성립했다.**
+
+### 세 번의 시행착오와 각각의 교훈
+
+**1. 배포하지 않고 테스트를 요청했다.** 코드는 커밋됐지만 게임에 올라간 적이 없었고,
+dist 브랜치도 구버전이라 2번째 PC 역시 같은 구버전을 설치했다.
+"기능이 안 된다"와 "구버전이 돌고 있다"는 화면상 구분되지 않는다.
+→ dist 게시를 `deploy.ps1` 에 넣어 기억해야 하는 단계를 없앴다.
+
+**2. `WorldContainer.worldType` 을 ProcGen 키로 가정했다.** 실제로는 번역 문자열 키였다.
+`ProcGen.World` 는 `name`(STRINGS 키)과 `filePath`(실제 키)를 별도로 갖는다.
+→ 실패 시 후보 목록을 로그에 남기도록 해서, 같은 정보 부족으로 두 번 추측하지 않게 했다.
+
+**3. 스탬프는 지형을 만들 뿐 시야를 열지 않는다.** 팟은 생성됐고 소유권도 맞았는데 보이지 않았다.
+바닐라에서 시작 구역이 보이는 것은 복제체가 거기 서 있어서 `GridVisibility` 가 주변을 밝히기
+때문이지, 지형이 생겨서가 아니다. 스탬프한 구역에는 아무도 없다.
+→ `GridVisibility.Reveal` + `Grid.Revealed` + `FogOfWarMask.ClearMask` 세 가지를 모두 처리.
+
+### 클라이언트 복제는 하드 싱크 없이 해결했다
+
+클라이언트의 월드는 접속 시 받은 세이브이므로, 이후 호스트가 만든 지형은 그쪽에 존재하지 않았다.
+월드를 다시 보내는 대신 **같은 템플릿을 같은 좌표에 찍으라고 알렸다**.
+
+- 템플릿은 양쪽이 이미 게임 파일로 보유
+- 건물 NetId 는 좌표에서 파생 → 결과 일치
+- 수 MB 대신 수십 바이트
+
+소유권은 이 패킷에 담지 않는다. 호스트가 정하고 `OwnershipSyncPacket` 이 나른다.
+
+### 시작 복제체는 템플릿에 없다
+
+월드의 최초 복제체는 시작 베이스 템플릿이 아니라 게임 시작 로직이 스폰한다.
+따라서 스탬프한 구역은 비어서 도착한다.
+
+인쇄와 동일한 경로(`MinionStartingStats.Deliver`)로 팟을 스코프에 넣고 배달하면
+소유권 상속과 클라이언트 전파가 **기존 기능만으로** 해결된다. 새로 만든 것이 없다.
