@@ -71,6 +71,7 @@ namespace ONI_Together.Networking.Packets.Architecture
 
                     var packet = PacketRegistry.Create(type);
 					packet.Deserialize(reader);
+					PacketSenderDiagnostics.Observe(senderId, packet.GetType().Name);
 					Dispatch(packet);
 
                     scope.End(packet.GetType().Name, data.Length);

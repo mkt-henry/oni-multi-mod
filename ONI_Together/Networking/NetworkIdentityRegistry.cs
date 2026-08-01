@@ -132,6 +132,7 @@ namespace ONI_Together.Networking
 			// Ownership is keyed by the NetIds being dropped here, so it has exactly this lifetime.
 			// Left behind, records from one world would still be answering lookups in the next.
 			Ownership.OwnershipRegistry.Instance.Clear();
+			PacketSenderDiagnostics.Clear();
 
 			PlayAnimPacket.ClearState();
 		}
