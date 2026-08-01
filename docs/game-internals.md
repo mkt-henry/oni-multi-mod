@@ -480,3 +480,59 @@ action=denied  command=move  x9     actor=76561199073336502  owner=7656119808420
 - 권한: 아무도 주장하지 않은 것은 **보호하지 않는다**
 
 시작 크루 배정이 들어오면서 복제체는 더 이상 이 경로에 도달하지 않는다. 백스톱으로만 남는다.
+
+---
+
+## 11. 3b 구현 경로 확정
+
+### 런타임에 시작 베이스 템플릿을 얻는 법 (확인 완료)
+
+```csharp
+// WorldContainer.worldType 이 ProcGen 월드 경로다
+WorldContainer wc  = ClusterManager.Instance.GetWorld(worldId);
+ProcGen.World def  = ProcGen.SettingsCache.worlds.GetWorldData(wc.worldType);
+string templatePath = def.startingBaseTemplate;          // 예: "bases/sandstoneBase"
+
+TemplateContainer template = TemplateCache.GetTemplate(templatePath);
+TemplateLoader.Stamp(template, position, onComplete);
+```
+
+- `ProcGen.SettingsCache.worlds` — `public static Worlds`
+- `Worlds.GetWorldData(string)` / `HasWorld(string)` — 확인됨
+- `WorldContainer.worldType` — `public string`
+
+**하드코딩 불필요.** 월드 정의에서 읽으므로 바이옴에 맞는 시작 구역이 나온다.
+
+### 건물 단독 배치는 불가능하다
+
+완성 건물을 심는 API 자체는 있다 (모드의 `BuildingSyncer.SpawnBuilding` 이 이미 쓴다):
+
+```csharp
+BuildingDef def = Assets.GetBuildingDef("Headquarters");
+def.Build(cell, Orientation.Neutral, null, def.DefaultElements(), 293.15f,
+          "DEFAULT_FACADE", playsound: false, GameClock.Instance.GetTime());
+// 위치 검증: def.IsValidPlaceLocation(visualizer, cell, orientation, out failReason)
+```
+
+**그러나 이것만으로는 안 된다.** 갓 생성된 월드는 시작 구역 말고는 전부 암반이라
+`IsValidPlaceLocation` 을 통과하는 빈 공간이 존재하지 않는다.
+
+`TemplateContainer` 는 `cells` 를 포함하고 `TemplateLoader` 의 `PlaceCells` 가 지형 자체를 찍는다.
+즉 **템플릿 스탬프는 자기가 들어갈 공간을 스스로 파낸다.** 계획서 G5 의 선택이
+"더 안전해서"가 아니라 **작동하는 유일한 방법**이었다.
+
+### 남은 진짜 난제: 위치 선정
+
+바닐라는 월드 그래프의 `WorldGenTags.StartLocation` 태그로 고르는데, 로드된 월드에는 그 그래프가 없다.
+직접 판정해야 한다.
+
+- 기존 팟에서 최소 거리
+- `GetTemplateBounds(pos, padding)` 만큼의 여유
+- 기존 건조물·시작 구역과 비겹침
+- 월드 경계 및 우주 구간 회피
+
+### 시작 자원
+
+`TemplateContainer` 에 `pickupables`, `elementalOres`, `buildings` 가 있으므로
+시작 자원과 팟이 모두 템플릿에 포함될 가능성이 높다. 실제 YAML 은 아직 확인하지 않았다.
+스탬프 후 결과물로 확인하는 편이 빠르다.
