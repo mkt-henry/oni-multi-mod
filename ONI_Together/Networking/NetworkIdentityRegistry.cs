@@ -129,6 +129,9 @@ namespace ONI_Together.Networking
 			// TODO Rope into 1
 			GroundItemPickedUpPacket.ClearPending();
 			StorageItemPacket.ClearPending();
+			// Ownership is keyed by the NetIds being dropped here, so it has exactly this lifetime.
+			// Left behind, records from one world would still be answering lookups in the next.
+			Ownership.OwnershipRegistry.Instance.Clear();
 
 			PlayAnimPacket.ClearState();
 		}
