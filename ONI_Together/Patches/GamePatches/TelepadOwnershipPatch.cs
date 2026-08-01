@@ -83,16 +83,24 @@ namespace ONI_Together.Patches.GamePatches
 		}
 
 		/// <summary>
+		/// Who the next stamped pod belongs to, set by <see cref="StartingAreaPlacer"/> while it works.
+		/// </summary>
+		/// <remarks>
+		/// Handed over rather than reassigned after the fact, so a pod is never briefly owned by the
+		/// wrong player. Safe as a single value because only one stamp runs at a time.
+		/// </remarks>
+		public static PlayerId NextPodOwner { get; set; } = PlayerId.None;
+
+		/// <summary>
 		/// Picks the player a newly spawned pod belongs to.
 		/// </summary>
 		/// <remarks>
-		/// Everything currently maps to the host, because a vanilla world generates exactly one pod.
-		/// When worldgen starts stamping one starting area per player, this is the single place that
-		/// has to learn how to tell them apart.
+		/// A pod that appeared because someone needed one belongs to them. Anything else - notably the
+		/// pod the world was generated with - goes to the host.
 		/// </remarks>
 		private static PlayerId ResolveOwnerFor(Telepad pod)
 		{
-			return PlayerId.Host;
+			return NextPodOwner.IsValid ? NextPodOwner : PlayerId.Host;
 		}
 
 		private static int ResolveWorldId(Telepad pod)

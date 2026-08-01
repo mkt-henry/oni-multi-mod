@@ -1,0 +1,213 @@
+﻿using System.Collections.Generic;
+using ONI_Together.DebugTools;
+using ONI_Together.Patches.GamePatches;
+using ProcGen;
+using Shared.Profiling;
+using UnityEngine;
+
+namespace ONI_Together.Networking.Ownership
+{
+	/// <summary>
+	/// Stamps an extra starting area so a player who has no printing pod gets one.
+	/// </summary>
+	/// <remarks>
+	/// Placing a bare Headquarters is not an option. A freshly generated world is solid rock outside
+	/// the original starting area, so nothing passes IsValidPlaceLocation. The starting base template
+	/// carries its own cells, which means stamping it digs out the space it needs - that is why this
+	/// works and the simpler approach does not.
+	/// <para>
+	/// The template comes from the world definition rather than a hardcoded path, so a world that is
+	/// not sandstone gets the starting area that belongs to it.
+	/// </para>
+	/// <para>
+	/// Stamping is asynchronous and runs in four phases, so the pod does not exist when Stamp returns.
+	/// Only one is allowed in flight at a time: two overlapping stamps would race over both the
+	/// terrain and the pending-owner handoff.
+	/// </para>
+	/// </remarks>
+	public static class StartingAreaPlacer
+	{
+		/// <summary>Gap left around the template when testing a candidate spot.</summary>
+		private const int Padding = 4;
+
+		/// <summary>Horizontal step between candidate positions, in cells.</summary>
+		private const int SearchStep = 12;
+
+		private const int MaxSearchSteps = 40;
+
+		/// <summary>Keeps a stamped area clear of the world edge.</summary>
+		private const int EdgeMargin = 8;
+
+		private static bool _stampInFlight;
+
+		public static bool IsBusy => _stampInFlight;
+
+		/// <summary>
+		/// Places a starting area for <paramref name="owner"/> if a spot can be found.
+		/// </summary>
+		/// <returns>False when nothing was started, for any reason.</returns>
+		public static bool TryPlaceFor(PlayerId owner)
+		{
+			using var _ = Profiler.Scope();
+
+			if (_stampInFlight)
+				return false;
+
+			if (!owner.IsValid)
+				return false;
+
+			try
+			{
+				var existingPods = ExistingPodPositions();
+				if (existingPods.Count == 0)
+				{
+					// Nothing to measure against, and no way to tell which world to build on.
+					DebugConsole.LogWarning("[StartingArea] No existing pod to place relative to; skipping.");
+					return false;
+				}
+
+				var template = LoadStartingTemplate();
+				if (template == null)
+					return false;
+
+				if (!TryFindSpot(template, existingPods, out var spot))
+				{
+					DebugConsole.LogWarning("[StartingArea] No usable location found for an extra starting area.");
+					return false;
+				}
+
+				_stampInFlight = true;
+
+				// Hand the owner to the Telepad patch rather than reassigning afterwards, so the pod is
+				// never briefly owned by the wrong player.
+				TelepadOwnershipPatch.NextPodOwner = owner;
+
+				DebugConsole.Log($"[StartingArea] Stamping '{template.name}' at {spot} for {owner}.");
+
+				TemplateLoader.Stamp(template, new Vector2(spot.x, spot.y), () =>
+				{
+					_stampInFlight = false;
+					TelepadOwnershipPatch.NextPodOwner = PlayerId.None;
+					DebugConsole.Log($"[StartingArea] Stamp complete at {spot} for {owner}.");
+				});
+
+				return true;
+			}
+			catch (System.Exception ex)
+			{
+				_stampInFlight = false;
+				TelepadOwnershipPatch.NextPodOwner = PlayerId.None;
+				DebugConsole.LogWarning($"[StartingArea] Failed to place a starting area: {ex}");
+				return false;
+			}
+		}
+
+		/// <summary>
+		/// The starting base template this world was generated with.
+		/// </summary>
+		private static TemplateContainer LoadStartingTemplate()
+		{
+			var cluster = ClusterManager.Instance;
+			var world = cluster != null ? cluster.activeWorld : null;
+			if (world == null)
+			{
+				DebugConsole.LogWarning("[StartingArea] No active world.");
+				return null;
+			}
+
+			if (string.IsNullOrEmpty(world.worldType) || !SettingsCache.worlds.HasWorld(world.worldType))
+			{
+				DebugConsole.LogWarning($"[StartingArea] Unknown world type '{world.worldType}'.");
+				return null;
+			}
+
+			string path = SettingsCache.worlds.GetWorldData(world.worldType)?.startingBaseTemplate;
+			if (string.IsNullOrEmpty(path))
+			{
+				DebugConsole.LogWarning($"[StartingArea] World '{world.worldType}' declares no starting base template.");
+				return null;
+			}
+
+			var template = TemplateCache.GetTemplate(path);
+			if (template == null)
+				DebugConsole.LogWarning($"[StartingArea] Template '{path}' could not be loaded.");
+
+			return template;
+		}
+
+		private static List<Vector2I> ExistingPodPositions()
+		{
+			var positions = new List<Vector2I>();
+
+			foreach (var telepad in global::Components.Telepads.Items)
+			{
+				if (telepad == null) continue;
+
+				int cell = Grid.PosToCell(telepad);
+				if (!Grid.IsValidCell(cell)) continue;
+
+				Grid.CellToXY(cell, out int x, out int y);
+				positions.Add(new Vector2I(x, y));
+			}
+
+			return positions;
+		}
+
+		/// <summary>
+		/// Walks outward from the first pod along the same horizontal band.
+		/// </summary>
+		/// <remarks>
+		/// Staying at the same depth keeps the new area in comparable terrain; moving vertically would
+		/// drop it into a different biome, or into space. Alternating left and right keeps it as close
+		/// to the middle of the map as the spacing allows.
+		/// <para>
+		/// Crude on purpose. Vanilla picks this spot from a worldgen graph that a loaded world no
+		/// longer has, so there is nothing to reuse - and a first version that is easy to reason about
+		/// is worth more than a clever one whose failures are hard to read.
+		/// </para>
+		/// </remarks>
+		private static bool TryFindSpot(TemplateContainer template, List<Vector2I> existingPods, out Vector2I spot)
+		{
+			spot = default;
+
+			var origin = existingPods[0];
+			var occupied = new List<RectInt>();
+			foreach (var pod in existingPods)
+				occupied.Add(template.GetTemplateBounds(new Vector2(pod.x, pod.y), Padding));
+
+			for (int step = 1; step <= MaxSearchSteps; step++)
+			{
+				foreach (int direction in new[] { -1, 1 })
+				{
+					var candidate = new Vector2I(origin.x + direction * step * SearchStep, origin.y);
+					if (!IsUsable(template, candidate, occupied))
+						continue;
+
+					spot = candidate;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool IsUsable(TemplateContainer template, Vector2I candidate, List<RectInt> occupied)
+		{
+			var bounds = template.GetTemplateBounds(new Vector2(candidate.x, candidate.y), Padding);
+
+			if (bounds.xMin < EdgeMargin || bounds.xMax >= Grid.WidthInCells - EdgeMargin)
+				return false;
+
+			if (bounds.yMin < EdgeMargin || bounds.yMax >= Grid.HeightInCells - EdgeMargin)
+				return false;
+
+			foreach (var taken in occupied)
+			{
+				if (bounds.Overlaps(taken))
+					return false;
+			}
+
+			return true;
+		}
+	}
+}
