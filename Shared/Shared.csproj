@@ -1,9 +1,0 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-	  <Nullable>enable</Nullable>
-	  <DoNotBuildAsMod>true</DoNotBuildAsMod>	  
-  </PropertyGroup>
-
-
-</Project>
