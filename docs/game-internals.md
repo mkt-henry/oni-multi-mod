@@ -188,17 +188,129 @@ public static class TemplateCache
 
 ---
 
-## 4. 아직 확인하지 않은 것
+## 4. 바닐라의 시작 베이스 배치 경로
 
-- **`startingBaseTemplate` 을 선언한 타입.** 프로퍼티(`get_startingBaseTemplate`)로 존재하며
-  `Assembly-CSharp-firstpass.dll`과 `Assembly-CSharp.dll` 양쪽에 심볼이 있다.
-  `ilspycmd -t World` 로는 `ProcGen` 쪽 타입을 잡지 못했다 — 타입명 재확인 필요.
-  하드코딩(`"bases/sandstoneBase"`) 대신 월드 정의에서 읽어야 바이옴별로 올바른 시작 구역이 나온다.
-- **배치 위치 선정 기준** — 팟 간 최소 거리, 지형 적합성, 기존 구조물 회피
-- **스탬프를 실행할 타이밍** — 월드 생성 완료 후 / 게임 시작 전 어느 훅인지
-- **시작 구역 자원 보장** — 템플릿에 포함되는지, 별도 로직인지
+`ProcGen.World` (**`Assembly-CSharp-firstpass.dll`**, 네임스페이스 `ProcGen`):
 
-**위 4개가 확정되기 전에는 3b를 구현하지 않는다.**
+```csharp
+public class World : IHasDlcRestrictions
+{
+    public string startingBaseTemplate { get; set; }              // 예: "bases/sandstoneBase"
+    public MinMax startingBasePositionHorizontal { get; private set; }  // 기본 (0.5, 0.5)
+    public MinMax startingBasePositionVertical   { get; private set; }  // 기본 (0.5, 0.5)
+}
+```
+
+`ProcGenGame.TemplateSpawning` (**`Assembly-CSharp.dll`**):
+
+```csharp
+private static void SpawnStartingTemplate(WorldGenSettings settings, List<TerrainCell> terrainCells, ...)
+{
+    // 시작 위치는 월드 그래프에서 태그로 지정된 노드다
+    TerrainCell terrainCell = terrainCells.Find(tc => tc.node.tags.Contains(WorldGenTags.StartLocation));
+
+    if (settings.world.startingBaseTemplate.IsNullOrWhiteSpace()) return;
+
+    TemplateContainer template = TemplateCache.GetTemplate(settings.world.startingBaseTemplate);
+    Vector2I position = new Vector2I((int)terrainCell.poly.Centroid().x, (int)terrainCell.poly.Centroid().y);
+    RectInt templateBounds = template.GetTemplateBounds(position, s_poiPadding);
+
+    if (IsPOIOverlappingBounds(placedPOIBounds, templateBounds)) { ... }
+}
+```
+
+### 확정된 사실
+
+| | |
+|---|---|
+| 템플릿 경로 출처 | `settings.world.startingBaseTemplate` — **하드코딩 불필요** |
+| 위치 선정 | `WorldGenTags.StartLocation` 태그가 붙은 `TerrainCell`의 중심 |
+| 겹침 검사 | `GetTemplateBounds(position, padding)` + `IsPOIOverlappingBounds` 가 이미 존재 |
+| 위 경로의 실행 시점 | **월드 생성 중** (`WorldGenSettings`, `terrainCells` 가 살아있을 때) |
+
+---
+
+## 5. 3b 설계 결론
+
+### 바닐라 경로는 재사용할 수 없다
+
+`SpawnStartingTemplate`은 월드 생성 중에만 동작한다. `terrainCells`와 `WorldGenSettings`는
+게임이 로드된 뒤에는 존재하지 않는다.
+
+**그리고 이 모드의 호스팅은 언제나 이미 생성된 월드에서 시작한다** (§6 참조).
+따라서 월드젠 후킹은 선택지가 아니며, 런타임 스탬프가 **유일하게 가능한 방법**이다.
+계획서 §2.6(G5)이 택한 방향이 결과적으로 유일한 정답이었다.
+
+### 구현 경로
+
+```
+1. 현재 월드의 startingBaseTemplate 경로를 얻는다
+   (ProcGen.World — 로드된 월드에서 접근 경로 확인 필요)
+2. TemplateCache.GetTemplate(경로)                → TemplateContainer
+3. 2번째 시작 위치를 직접 고른다  ← 바닐라 로직 재사용 불가, 우리가 짜야 함
+4. TemplateContainer.GetTemplateBounds(pos, pad)  → 겹침·여유 검사
+5. TemplateLoader.Stamp(template, pos, onComplete)
+6. onComplete 안에서 새 Telepad 을 찾아 배정
+   (TelepadOwnershipPatch.ResolveOwnerFor 확장)
+```
+
+**3번이 3b의 실제 난제다.** 바닐라는 월드 그래프의 `StartLocation` 태그에 의존하는데,
+로드된 월드에는 그 그래프가 없다. 직접 판정해야 한다.
+
+- 기존 팟에서 최소 거리 이상
+- 템플릿 footprint 만큼의 여유 공간
+- 진공/우주 구간 회피
+- 기존 건조물과 비겹침
+
+### 남은 미확인 항목
+
+- 로드된 월드에서 `ProcGen.World` (따라서 `startingBaseTemplate`) 에 접근하는 경로.
+  `SettingsCache.worlds` 또는 `ClusterManager` → `WorldContainer` 경유로 추정되나 미확인.
+- 시작 구역 자원이 템플릿에 포함되는지. `TemplateContainer`에 `pickupables`,
+  `elementalOres` 필드가 있으므로 포함될 가능성이 높으나 실제 YAML 미확인.
+
+---
+
+## 6. 호스팅은 언제나 기존 세이브에서 시작한다
+
+`ONI_Together/Menus/HostLobbyConfigScreen.cs`:
+
+```csharp
+MultiplayerSession.ShouldHostAfterLoad = true;
+if (mainMenu.saveFileEntries.Count > 0)
+    mainMenu.LoadGame();     // 세이브가 있으면 불러오기
+else
+    mainMenu.NewGame();      // 세이브가 0개일 때만 새 게임
+```
+
+upstream의 의도된 동작이다. 새 월드로 플레이하려면
+**싱글플레이에서 생성·저장 → 그 세이브를 호스팅**하는 순서를 거쳐야 한다.
+
+§5의 "월드젠 후킹 불가" 결론이 여기서 나온다.
+
+---
+
+## 7. Phase 3a 실증 결과 (2026-08-01)
+
+게임 빌드 744825, 호스트 세션에서 확인.
+
+```
+[Ownership] action=register netId=1060217590 owner=76561198084204138 type=PrintingPod world=0 result=ok
+```
+
+세이브 파일(`클럽하우스.sav`) offset 16946 평문 영역:
+
+```
+ONI_Together.Networking.Ownership.OwnershipComponent
+    OwnerId .... OwnedTypeRaw .... WorldId
+```
+
+**런타임에 `AddOrGet` 으로 붙인 컴포넌트가 KSerialization 직렬화 템플릿에 정상 등록된다.**
+사전에 가장 우려했던 실패 모드는 발생하지 않았다.
+
+- 인스턴스 값은 세이브의 압축 구간에 있어 정적 검사로는 읽을 수 없다
+- **로드 후 복원 경로는 아직 미검증.** `[TelepadOwnership] Pod netId=... restored for ...`
+  로그가 이미 코드에 있으므로, 해당 세이브를 호스트로 로드하면 자동으로 확인된다
 
 ---
 
