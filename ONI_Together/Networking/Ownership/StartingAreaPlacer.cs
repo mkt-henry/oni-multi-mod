@@ -88,6 +88,7 @@ namespace ONI_Together.Networking.Ownership
 				{
 					_stampInFlight = false;
 					TelepadOwnershipPatch.NextPodOwner = PlayerId.None;
+					RevealArea(template, spot);
 					DebugConsole.Log($"[StartingArea] Stamp complete at {spot} for {owner}.");
 				});
 
@@ -131,6 +132,52 @@ namespace ONI_Together.Networking.Ownership
 				DebugConsole.LogWarning($"[StartingArea] Template '{path}' could not be loaded.");
 
 			return template;
+		}
+
+		/// <summary>
+		/// Lifts the fog over a freshly stamped area so it can actually be seen.
+		/// </summary>
+		/// <remarks>
+		/// Stamping places terrain and buildings but reveals nothing. In a normal game the starting
+		/// area is visible because duplicants spawn standing in it and their GridVisibility reveals
+		/// what surrounds them; a stamped area has nobody in it, so it stays under fog and looks like
+		/// it was never created.
+		/// <para>
+		/// GridVisibility.Reveal only fades in the visibility values. Grid.Revealed and the fog mask
+		/// are maintained by its caller, so both are done here too - otherwise the area brightens but
+		/// the fog sheet stays drawn over it.
+		/// </para>
+		/// </remarks>
+		private static void RevealArea(TemplateContainer template, Vector2I spot)
+		{
+			try
+			{
+				var bounds = template.GetTemplateBounds(new Vector2(spot.x, spot.y), Padding);
+
+				int centreX = bounds.xMin + bounds.width / 2;
+				int centreY = bounds.yMin + bounds.height / 2;
+				int radius = Mathf.Max(bounds.width, bounds.height) / 2 + Padding;
+
+				// innerRadius must stay below radius; the falloff divides by the difference.
+				GridVisibility.Reveal(centreX, centreY, radius, Mathf.Max(1f, radius - 2f));
+
+				for (int y = bounds.yMin; y <= bounds.yMax; y++)
+				{
+					for (int x = bounds.xMin; x <= bounds.xMax; x++)
+					{
+						int cell = Grid.XYToCell(x, y);
+						if (!Grid.IsValidCell(cell)) continue;
+
+						Grid.Revealed[cell] = true;
+						FogOfWarMask.ClearMask(cell);
+					}
+				}
+			}
+			catch (System.Exception ex)
+			{
+				// The area exists either way; not seeing it is better than losing it.
+				DebugConsole.LogWarning($"[StartingArea] Placed the area but could not reveal it: {ex}");
+			}
 		}
 
 		/// <summary>
