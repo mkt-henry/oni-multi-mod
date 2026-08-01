@@ -33,6 +33,21 @@ namespace ONI_Together.Networking.Ownership
 			DebugConsole.LogWarning(Build(action, netId, owner, type, worldId, "rejected", actor: PlayerId.CurrentSender, reason: reason));
 		}
 
+		/// <summary>
+		/// Records a command the host refused because the sender does not own the target.
+		/// </summary>
+		/// <remarks>
+		/// Warning level on purpose. In normal play a client greys out what it cannot do, so a denial
+		/// reaching the host means either the UI and the rules disagree or something bypassed the UI.
+		/// Both are worth seeing.
+		/// </remarks>
+		public static void Denied(string command, PlayerId actor, int netId, PlayerId owner)
+		{
+			DebugConsole.LogWarning(
+				$"{Prefix} action=denied command={command} netId={netId} " +
+				$"actor={actor.Value} owner={owner.Value}");
+		}
+
 		private static string Build(
 			string action,
 			int netId,
