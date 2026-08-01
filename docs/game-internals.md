@@ -127,15 +127,78 @@ public class Immigration : KMonoBehaviour, ISaveLoadable, ISim200ms, IPersonalPr
 
 ---
 
-## 3. 아직 확인하지 않은 것
+## 3. 템플릿 스탬프 — Phase 3b의 기반
 
-Phase 3의 팟 *배치*에 필요한 부분은 아직 디컴파일하지 않았다.
+계획서 §2.6(G5)에서 "월드젠 개조가 아니라 생성 후 템플릿 스탬프"를 택했는데,
+그 방식이 **추측이 아니라 실제 public API로 존재함**을 확인했다.
 
-- `TemplateLoader` / `TemplateContainer` — 시작 베이스 템플릿을 어떻게 찍는가
-- 월드 생성 시 최초 Telepad이 어디서 스폰되는가
-- 시작 구역 자원 보장 로직
+### TemplateLoader.Stamp — 런타임 배치 진입점
 
-Phase 3에 들어가기 전에 위 3개를 같은 방식으로 확정해야 한다. **추측으로 구현하지 않는다.**
+```csharp
+public static class TemplateLoader
+{
+    // ★ public static. 런타임에 임의 위치로 템플릿을 찍을 수 있다.
+    public static void Stamp(TemplateContainer template, Vector2 rootLocation, System.Action on_complete_callback)
+    {
+        ActiveStamp item = new ActiveStamp(template, rootLocation, on_complete_callback);
+        activeStamps.Add(item);
+    }
+
+    public static GameObject PlaceBuilding(Prefab prefab, int root_cell);
+    public static GameObject PlacePickupables(Prefab prefab, int root_cell);
+    public static GameObject PlaceOtherEntities(Prefab prefab, int root_cell);
+    public static GameObject PlaceElementalOres(Prefab prefab, int root_cell);
+    public static void PlaceUtilityConnection(GameObject spawned, Prefab bc, int root_cell);
+    public static void ApplyGridProperties(int baseX, int baseY, TemplateContainer template);
+}
+```
+
+**비동기 다단계 처리**다. `BuildPhase1`~`BuildPhase4`로 나뉘어 진행되고
+(셀 → 건물 → 픽업 가능 항목 → 기타 엔티티/광석), 완료 시 콜백이 호출된다.
+즉 스탬프 직후에 팟이 존재한다고 가정하면 안 되고, **`on_complete_callback` 안에서** 찾아야 한다.
+
+### TemplateCache — 템플릿 로딩
+
+```csharp
+public static class TemplateCache
+{
+    private const string defaultAssetFolder = "bases";
+
+    public static void Init();
+    public static TemplateContainer GetTemplate(string templatePath);   // YAML 로드 + 캐시
+    public static bool TemplateExists(string templatePath);
+    public static string RewriteTemplateYaml(string scopePath);
+}
+```
+
+`TemplateContainer`는 `cells`, `buildings`, `pickupables`, `elementalOres`,
+`backwallEntities`, `otherEntities`와 `GetTemplateBounds(position, padding)`를 가진다.
+**경계 계산이 내장돼 있으므로 배치 위치 겹침 검사에 그대로 쓸 수 있다.**
+
+### 3b 구현 경로 (확정)
+
+```
+1. 월드가 쓴 시작 베이스 템플릿 경로를 얻는다
+2. TemplateCache.GetTemplate(경로)        → TemplateContainer
+3. GetTemplateBounds 로 후보 위치의 겹침·여유 검사
+4. TemplateLoader.Stamp(template, 위치, onComplete)
+5. onComplete 안에서 새 Telepad 을 찾아 2번째 플레이어에게 배정
+   (TelepadOwnershipPatch.ResolveOwnerFor 를 이 정보로 확장)
+```
+
+---
+
+## 4. 아직 확인하지 않은 것
+
+- **`startingBaseTemplate` 을 선언한 타입.** 프로퍼티(`get_startingBaseTemplate`)로 존재하며
+  `Assembly-CSharp-firstpass.dll`과 `Assembly-CSharp.dll` 양쪽에 심볼이 있다.
+  `ilspycmd -t World` 로는 `ProcGen` 쪽 타입을 잡지 못했다 — 타입명 재확인 필요.
+  하드코딩(`"bases/sandstoneBase"`) 대신 월드 정의에서 읽어야 바이옴별로 올바른 시작 구역이 나온다.
+- **배치 위치 선정 기준** — 팟 간 최소 거리, 지형 적합성, 기존 구조물 회피
+- **스탬프를 실행할 타이밍** — 월드 생성 완료 후 / 게임 시작 전 어느 훅인지
+- **시작 구역 자원 보장** — 템플릿에 포함되는지, 별도 로직인지
+
+**위 4개가 확정되기 전에는 3b를 구현하지 않는다.**
 
 ---
 
