@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using ONI_Together.DebugTools;
+using ONI_Together.Networking.Packets.Architecture;
 using ONI_Together.Patches.GamePatches;
 using ProcGen;
 using Shared.Profiling;
@@ -38,6 +39,9 @@ namespace ONI_Together.Networking.Ownership
 		/// <summary>Keeps a stamped area clear of the world edge.</summary>
 		private const int EdgeMargin = 8;
 
+		/// <summary>Matches the crew a vanilla world opens with.</summary>
+		private const int CrewSize = 3;
+
 		private static bool _stampInFlight;
 
 		public static bool IsBusy => _stampInFlight;
@@ -66,7 +70,7 @@ namespace ONI_Together.Networking.Ownership
 					return false;
 				}
 
-				var template = LoadStartingTemplate();
+				var template = LoadStartingTemplate(out string templatePath);
 				if (template == null)
 					return false;
 
@@ -89,7 +93,19 @@ namespace ONI_Together.Networking.Ownership
 					_stampInFlight = false;
 					TelepadOwnershipPatch.NextPodOwner = PlayerId.None;
 					RevealArea(template, spot);
+					SpawnStartingCrew(spot, owner);
 					DebugConsole.Log($"[StartingArea] Stamp complete at {spot} for {owner}.");
+				});
+
+				// Clients hold the world as it was when they were sent the save, so a stamp made now
+				// exists only here. Rather than resend the whole world, they are told to stamp the same
+				// template at the same place: the template is game data both sides already have, and
+				// NetIds are derived from position, so the two results agree.
+				PacketSender.SendToAllClients(new Packets.World.StartingAreaStampPacket
+				{
+					TemplatePath = templatePath,
+					X = spot.x,
+					Y = spot.y,
 				});
 
 				return true;
@@ -106,8 +122,97 @@ namespace ONI_Together.Networking.Ownership
 		/// <summary>
 		/// The starting base template this world was generated with.
 		/// </summary>
-		private static TemplateContainer LoadStartingTemplate()
+		/// <summary>
+		/// Reproduces a stamp the host made, for a client whose world predates it.
+		/// </summary>
+		public static void StampFromNetwork(string templatePath, int x, int y)
 		{
+			using var _ = Profiler.Scope();
+
+			try
+			{
+				var template = TemplateCache.GetTemplate(templatePath);
+				if (template == null)
+				{
+					DebugConsole.LogWarning($"[StartingArea] Host stamped '{templatePath}' but it could not be loaded here.");
+					return;
+				}
+
+				var spot = new Vector2I(x, y);
+				DebugConsole.Log($"[StartingArea] Reproducing host stamp of '{templatePath}' at {spot}.");
+
+				TemplateLoader.Stamp(template, new Vector2(x, y), () =>
+				{
+					RevealArea(template, spot);
+					DebugConsole.Log($"[StartingArea] Reproduced stamp complete at {spot}.");
+				});
+			}
+			catch (System.Exception ex)
+			{
+				DebugConsole.LogWarning($"[StartingArea] Failed to reproduce the host's stamp: {ex}");
+			}
+		}
+
+		/// <summary>
+		/// Gives a newly stamped pod a crew, since the template does not carry one.
+		/// </summary>
+		/// <remarks>
+		/// A world's opening duplicants are spawned by game start logic, not by the starting base
+		/// template, so a stamped area arrives empty. Delivered through the same path as printing -
+		/// with the pod in scope - so they inherit its owner and reach clients by the entity spawn
+		/// packet that already exists, rather than needing anything new.
+		/// </remarks>
+		private static void SpawnStartingCrew(Vector2I spot, PlayerId owner)
+		{
+			try
+			{
+				var pod = FindPodOwnedBy(owner);
+				if (pod == null)
+				{
+					DebugConsole.LogWarning($"[StartingArea] No pod found for {owner}; it will have no crew.");
+					return;
+				}
+
+				var position = pod.transform.GetPosition();
+
+				for (int i = 0; i < CrewSize; i++)
+				{
+					var stats = new MinionStartingStats(is_starter_minion: true);
+
+					using (PrintingPodContext.Scope(pod))
+					{
+						stats.Deliver(position);
+					}
+				}
+
+				DebugConsole.Log($"[StartingArea] Delivered {CrewSize} duplicants to {owner}'s new pod.");
+			}
+			catch (System.Exception ex)
+			{
+				DebugConsole.LogWarning($"[StartingArea] Placed the area but could not deliver a crew: {ex}");
+			}
+		}
+
+		private static Telepad FindPodOwnedBy(PlayerId owner)
+		{
+			foreach (var telepad in global::Components.Telepads.Items)
+			{
+				if (telepad == null) continue;
+
+				if (telepad.TryGetComponent<OwnershipComponent>(out var ownership)
+					&& ownership.HasOwner
+					&& ownership.Owner == owner)
+				{
+					return telepad;
+				}
+			}
+
+			return null;
+		}
+
+		private static TemplateContainer LoadStartingTemplate(out string templatePath)
+		{
+			templatePath = null;
 			var cluster = ClusterManager.Instance;
 			var world = cluster != null ? cluster.activeWorld : null;
 			if (world == null)
@@ -129,8 +234,12 @@ namespace ONI_Together.Networking.Ownership
 
 			var template = TemplateCache.GetTemplate(path);
 			if (template == null)
+			{
 				DebugConsole.LogWarning($"[StartingArea] Template '{path}' could not be loaded.");
+				return null;
+			}
 
+			templatePath = path;
 			return template;
 		}
 
