@@ -135,6 +135,7 @@ namespace ONI_Together.Networking
 			Packets.World.OwnershipSyncPacket.ClearPending();
 			PacketSenderDiagnostics.Clear();
 			Patches.GamePatches.BuildStampPatch.Reset();
+			Patches.GamePatches.PlayerStartingAreaPatch.Reset();
 
 			PlayAnimPacket.ClearState();
 		}

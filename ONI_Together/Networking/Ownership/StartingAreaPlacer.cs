@@ -115,16 +115,14 @@ namespace ONI_Together.Networking.Ownership
 				return null;
 			}
 
-			if (string.IsNullOrEmpty(world.worldType) || !SettingsCache.worlds.HasWorld(world.worldType))
-			{
-				DebugConsole.LogWarning($"[StartingArea] Unknown world type '{world.worldType}'.");
+			var definition = ResolveWorldDefinition(world);
+			if (definition == null)
 				return null;
-			}
 
-			string path = SettingsCache.worlds.GetWorldData(world.worldType)?.startingBaseTemplate;
+			string path = definition.startingBaseTemplate;
 			if (string.IsNullOrEmpty(path))
 			{
-				DebugConsole.LogWarning($"[StartingArea] World '{world.worldType}' declares no starting base template.");
+				DebugConsole.LogWarning($"[StartingArea] World '{definition.filePath}' declares no starting base template.");
 				return null;
 			}
 
@@ -133,6 +131,45 @@ namespace ONI_Together.Networking.Ownership
 				DebugConsole.LogWarning($"[StartingArea] Template '{path}' could not be loaded.");
 
 			return template;
+		}
+
+		/// <summary>
+		/// Finds the generation-time definition behind a loaded world.
+		/// </summary>
+		/// <remarks>
+		/// Harder than it looks. WorldContainer.worldType is not the key the world was loaded under -
+		/// it holds a localisation key such as STRINGS.WORLDS.SANDSTONE_DEFAULT.NAME, which is what
+		/// ProcGen.World exposes as its name. The key is the file path, held separately in filePath.
+		/// <para>
+		/// So the display name is matched back to a definition, with direct lookups tried first in
+		/// case some worlds do store a path there. On failure the candidates are logged, because
+		/// guessing a second time from the same absence of information is not worth the round trip.
+		/// </para>
+		/// </remarks>
+		private static ProcGen.World ResolveWorldDefinition(WorldContainer world)
+		{
+			foreach (string key in new[] { world.worldType, world.worldName })
+			{
+				if (!string.IsNullOrEmpty(key) && SettingsCache.worlds.HasWorld(key))
+					return SettingsCache.worlds.GetWorldData(key);
+			}
+
+			var names = SettingsCache.worlds.GetNames();
+
+			foreach (string key in names)
+			{
+				var candidate = SettingsCache.worlds.GetWorldData(key);
+				if (candidate == null) continue;
+
+				if (candidate.name == world.worldType || candidate.name == world.worldName)
+					return candidate;
+			}
+
+			DebugConsole.LogWarning(
+				$"[StartingArea] Could not match world (worldType='{world.worldType}', worldName='{world.worldName}') " +
+				$"to any of {names.Count} known definitions. First few: {string.Join(", ", names.GetRange(0, System.Math.Min(5, names.Count)))}");
+
+			return null;
 		}
 
 		private static List<Vector2I> ExistingPodPositions()

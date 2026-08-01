@@ -27,6 +27,17 @@ namespace ONI_Together.Patches.GamePatches
 		/// Long enough that a stamp finishes before the next look, since stamping is asynchronous.
 		/// </summary>
 		private const float IntervalSeconds = 5f;
+		private const int MaxConsecutiveFailures = 3;
+
+		private static int _consecutiveFailures;
+		private static bool _givenUp;
+
+		/// <summary>Called when a world unloads, so a reload gets a fresh chance.</summary>
+		public static void Reset()
+		{
+			_consecutiveFailures = 0;
+			_givenUp = false;
+		}
 
 		public static void Postfix()
 		{
@@ -54,6 +65,9 @@ namespace ONI_Together.Patches.GamePatches
 			if (!MultiplayerSession.IsHostInSession)
 				return;
 
+			if (_givenUp)
+				return;
+
 			if (StartingAreaPlacer.IsBusy)
 				return;
 
@@ -77,7 +91,22 @@ namespace ONI_Together.Patches.GamePatches
 					DebugConsole.Log($"[StartingArea] {owner} has no printing pod; placing one.");
 
 					// One at a time. The next pass picks up anyone still waiting.
-					StartingAreaPlacer.TryPlaceFor(owner);
+					if (StartingAreaPlacer.TryPlaceFor(owner))
+					{
+						_consecutiveFailures = 0;
+						return;
+					}
+
+					// Whatever stopped it will still be true in five seconds. Retrying forever would
+					// bury the reason under identical warnings, so stop and say so once.
+					if (++_consecutiveFailures >= MaxConsecutiveFailures)
+					{
+						_givenUp = true;
+						DebugConsole.LogWarning(
+							$"[StartingArea] Giving up after {_consecutiveFailures} failed attempts to place a pod for {owner}. " +
+							"Reload the world to try again.");
+					}
+
 					return;
 				}
 			}
