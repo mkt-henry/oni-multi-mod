@@ -33,19 +33,35 @@ namespace ONI_Together.Patches.GamePatches
 	public static class StartingCrewOwnershipPatch
 	{
 		private const float SettleDelaySeconds = 2f;
+		private const int MaxAttempts = 10;
 
 		public static void Postfix()
 		{
-			if (!MultiplayerSession.IsHostInSession) return;
-
-			GameScheduler.Instance?.Schedule("ClaimStartingCrew", SettleDelaySeconds, _ => ClaimUnownedDuplicants());
+			// Deliberately not gated on being the host here. Hosting is established after the save
+			// finishes loading, so at this point inSession is still false even when hosting - checking
+			// now is what stopped this from ever running. The scheduled pass decides instead.
+			Schedule(attempt: 1);
 		}
 
-		private static void ClaimUnownedDuplicants()
+		private static void Schedule(int attempt)
+		{
+			GameScheduler.Instance?.Schedule("ClaimStartingCrew", SettleDelaySeconds, _ => ClaimUnownedDuplicants(attempt));
+		}
+
+		private static void ClaimUnownedDuplicants(int attempt)
 		{
 			using var _ = Profiler.Scope();
 
-			if (!MultiplayerSession.IsHostInSession) return;
+			if (!MultiplayerSession.IsHostInSession)
+			{
+				// Either singleplayer, a client, or hosting has not finished coming up yet. There is no
+				// event to wait on that reliably means "the session is ready", so retry a bounded
+				// number of times and then stop rather than poll forever.
+				if (attempt < MaxAttempts)
+					Schedule(attempt + 1);
+
+				return;
+			}
 
 			try
 			{
