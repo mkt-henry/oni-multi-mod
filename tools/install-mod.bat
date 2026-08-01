@@ -87,10 +87,15 @@ for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%DEST%\ONI_Together.dll" S
 )
 
 echo ---------------------------------------------------------------
-echo   Build check - SHA256 of ONI_Together.dll
-echo   This MUST match the host PC, or the two builds differ.
+echo   Build check - both values MUST match the host PC
 echo ---------------------------------------------------------------
-echo   !HASH!
+if exist "%DEST%\BUILD.txt" (
+    set /p STAMP=<"%DEST%\BUILD.txt"
+    echo   build   !STAMP!
+) else (
+    echo   build   unstamped - deployed without tools\deploy.ps1
+)
+echo   sha256  !HASH!
 echo.
 echo ---------------------------------------------------------------
 echo   Next steps
