@@ -322,3 +322,61 @@ ONI_Together.Networking.Ownership.OwnershipComponent
 | Phase 4 (G4) 난이도 | **상향** — 타이머뿐 아니라 `spawnIdx` 난이도 곡선까지 팟별 분리 필요 |
 | 부록 A worldId | **확정** — `GetMyWorldId()`로 획득 가능 |
 | 부록 A `Immigration` 싱글톤 | **확정** — `public static Immigration Instance` |
+
+---
+
+## 8. 2인 세션 실증 (2026-08-01)
+
+호스트 PC(`76561198084204138`) + 클라이언트 PC(`76561199073336502`), 게임 빌드 744825.
+양쪽 모드 DLL SHA256 동일 확인 (`42104eb7...b10d`).
+
+### 발신자 귀속 (Phase 1)
+
+호스트 로그:
+```
+[PacketSender] First packet attributed to 76561199073336502 via GameStateRequestPacket.
+               local=76561198084204138 host=76561198084204138 isHost=True
+```
+
+클라이언트 로그:
+```
+[PacketSender] First packet attributed to 76561198084204138 via GameStateRequestPacket.
+               local=76561199073336502 host=76561198084204138 isHost=False
+```
+
+호스트는 클라이언트 패킷을 클라이언트에게, 클라이언트는 수신 패킷을 호스트에게 귀속시킨다.
+`Unattributed` 경고 양쪽 0건. **권한 검사를 올릴 토대가 검증됐다.**
+
+### 소유권 동기화 (Phase 3a)
+
+세이브 전송이 실제로 일어났다:
+```
+[SaveFileRequest] Starting SECURE transfer of '클럽하우스2.sav' (1.54 MB) in 7 chunks
+[SaveFileRequest] SECURE transfer complete.
+```
+
+클라이언트 로그:
+```
+[Ownership] action=register netId=1060217590 owner=76561198084204138 type=PrintingPod world=0 result=ok
+```
+
+**소유권 패킷을 한 개도 만들지 않았는데 클라이언트가 정확한 소유자와 동일한 netId를 갖는다.**
+Phase 2에서 별도 메타데이터 대신 컴포넌트 직렬화를 택한 판단이 입증됐다.
+계획서 Phase 3 완료 조건 "호스트와 클라이언트에서 동일한 ID 확인"도 함께 통과.
+
+### 판정 기준의 결함 (기록)
+
+클라이언트에서는 `[TelepadOwnership] ... restored` 가 찍히지 않았다.
+컴포넌트 `OnSpawn` 순서 때문에 `Telepad.OnSpawn` 패치가 먼저 돌면서 `HasOwner=false` 로 관측했고,
+클라이언트이므로 조용히 반환했다. 등록은 그 뒤 `OwnershipComponent.OnSpawn` 이 수행했다.
+
+동작은 정상이나 **로그가 실제 상태를 반영하지 못한다.** `restored` 라인만 판정 기준으로 삼았다면
+정상 동작을 실패로 오판했을 것이다. 로그를 상태와 일치시켜야 한다.
+
+### 별건: upstream 경고
+
+`[PacketSender] No connection found for SteamID 0` 244줄.
+우리 코드가 아니라 upstream `PacketSender.SendToPlayer` 의 경고이며 접두사가 우연히 겹친다.
+`Connection ... fully established` 가 3회 찍힌 것으로 보아 재접속이 있었고,
+그 시점부터 주기적 동기화가 사라진 플레이어에게 계속 전송을 시도하는 것으로 보인다.
+예외 0건이고 세션은 정상 동작하여 지금은 손대지 않는다. 진단 로그를 묻히게 하는 소음이므로 추후 처리.
