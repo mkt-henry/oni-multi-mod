@@ -53,13 +53,13 @@ namespace ONI_Together.Patches.GamePatches
 
 				var ownership = pod.AddOrGet<OwnershipComponent>();
 
-				// Loaded from a save that already knew the owner. OwnershipComponent.OnSpawn has put it
-				// back in the registry, so re-asserting here would only risk fighting the host.
+				// Already owned, so there is nothing to decide. Deliberately silent: this hook cannot
+				// see the restore reliably - component OnSpawn ordering means HasOwner may still read
+				// false here even though the value did load, which is exactly what happened on the
+				// client during two player testing and nearly got a working system marked broken.
+				// OwnershipComponent reports the restore itself, from a place that always runs.
 				if (ownership.HasOwner)
-				{
-					DebugConsole.Log($"[TelepadOwnership] Pod netId={identity.NetId} restored for {ownership.Owner}.");
 					return;
-				}
 
 				// Only the host decides ownership. A client that reaches here has a pod the host has not
 				// assigned yet; it will arrive owned on the next sync.

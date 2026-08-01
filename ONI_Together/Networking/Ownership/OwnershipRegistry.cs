@@ -27,7 +27,7 @@ namespace ONI_Together.Networking.Ownership
 
 		public IEnumerable<OwnershipRecord> All => _records.Values;
 
-		public bool Register(int netId, PlayerId owner, OwnershipType type, int worldId)
+		public bool Register(int netId, PlayerId owner, OwnershipType type, int worldId, string origin = "register")
 		{
 			using var _ = Profiler.Scope();
 
@@ -35,19 +35,19 @@ namespace ONI_Together.Networking.Ownership
 			// that can never be matched back to an object.
 			if (netId == 0)
 			{
-				OwnershipLog.Rejected("register", netId, owner, type, worldId, "netId-unassigned");
+				OwnershipLog.Rejected(origin, netId, owner, type, worldId, "netId-unassigned");
 				return false;
 			}
 
 			if (!owner.IsValid)
 			{
-				OwnershipLog.Rejected("register", netId, owner, type, worldId, "owner-invalid");
+				OwnershipLog.Rejected(origin, netId, owner, type, worldId, "owner-invalid");
 				return false;
 			}
 
 			if (type == OwnershipType.None)
 			{
-				OwnershipLog.Rejected("register", netId, owner, type, worldId, "type-none");
+				OwnershipLog.Rejected(origin, netId, owner, type, worldId, "type-none");
 				return false;
 			}
 
@@ -62,14 +62,14 @@ namespace ONI_Together.Networking.Ownership
 				DetachFromOwner(existing);
 				_records[netId] = new OwnershipRecord(netId, owner, type, worldId);
 				AttachToOwner(_records[netId]);
-				OwnershipLog.Event("register", netId, owner, type, worldId, $"replaced-owner-{existing.Owner.Value}");
+				OwnershipLog.Event(origin, netId, owner, type, worldId, $"replaced-owner-{existing.Owner.Value}");
 				return true;
 			}
 
 			var record = new OwnershipRecord(netId, owner, type, worldId);
 			_records[netId] = record;
 			AttachToOwner(record);
-			OwnershipLog.Event("register", netId, owner, type, worldId, "ok");
+			OwnershipLog.Event(origin, netId, owner, type, worldId, "ok");
 			return true;
 		}
 

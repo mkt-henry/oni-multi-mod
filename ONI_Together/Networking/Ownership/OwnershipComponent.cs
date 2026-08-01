@@ -50,7 +50,10 @@ namespace ONI_Together.Networking.Ownership
 			if (!HasOwner)
 				return;
 
-			PublishToRegistry("spawn");
+			// Reported from here rather than from whatever patched the owning object into existence.
+			// This runs on host and client alike, and always after deserialisation, so it is the only
+			// place that can say "this came back from the save" and be right about it.
+			PublishToRegistry("restore");
 		}
 
 		/// <summary>
@@ -103,7 +106,7 @@ namespace ONI_Together.Networking.Ownership
 				return false;
 			}
 
-			return OwnershipRegistry.Instance.Register(netId, Owner, OwnedType, WorldId);
+			return OwnershipRegistry.Instance.Register(netId, Owner, OwnedType, WorldId, origin);
 		}
 
 		private bool TryGetNetId(out int netId)

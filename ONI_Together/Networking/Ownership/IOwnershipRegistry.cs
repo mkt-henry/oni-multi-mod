@@ -26,8 +26,13 @@ namespace ONI_Together.Networking.Ownership
 		/// Re-registering an already-owned object replaces the record; the host is authoritative and
 		/// is allowed to correct itself.
 		/// </summary>
+		/// <param name="origin">
+		/// What caused this, used as the action in the log. Distinguishing a restore from a fresh
+		/// assignment matters when reading a session log: they mean very different things, and a
+		/// restore appearing where an assignment belongs is how a persistence bug shows itself.
+		/// </param>
 		/// <returns>False when the arguments are unusable, in which case nothing is recorded.</returns>
-		bool Register(int netId, PlayerId owner, OwnershipType type, int worldId);
+		bool Register(int netId, PlayerId owner, OwnershipType type, int worldId, string origin = "register");
 
 		/// <summary>Hands an existing object to a different player, keeping its type and world.</summary>
 		/// <returns>False when the object has no record.</returns>
