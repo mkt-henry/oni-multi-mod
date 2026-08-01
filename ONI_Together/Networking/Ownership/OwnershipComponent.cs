@@ -1,6 +1,7 @@
 ﻿using KSerialization;
 using ONI_Together.DebugTools;
 using ONI_Together.Networking.Components;
+using ONI_Together.Networking.Packets.Architecture;
 using Shared.Profiling;
 
 namespace ONI_Together.Networking.Ownership
@@ -46,6 +47,16 @@ namespace ONI_Together.Networking.Ownership
 
 			base.OnSpawn();
 
+			// Ownership the host decided may have arrived before this object existed - see
+			// OwnershipSyncPacket. Claim it now, in preference to whatever was serialised, because it
+			// is the more recent statement of who owns this.
+			if (TryGetNetId(out int pendingNetId)
+				&& Packets.World.OwnershipSyncPacket.TryTakePending(pendingNetId, out var queuedOwner, out var queuedType, out int queuedWorld))
+			{
+				ApplyRemote(queuedOwner, queuedType, queuedWorld);
+				return;
+			}
+
 			// Nothing to restore on a freshly placed object; Assign will register it when ownership is set.
 			if (!HasOwner)
 				return;
@@ -71,7 +82,40 @@ namespace ONI_Together.Networking.Ownership
 			OwnedTypeRaw = (byte)type;
 			WorldId = worldId;
 
-			return PublishToRegistry("assign");
+			bool registered = PublishToRegistry("assign");
+
+			// Tell the clients. Only meaningful for things decided mid session - anything that was
+			// already in the world when the client received the save arrives owned without this.
+			if (registered && MultiplayerSession.IsHostInSession && TryGetNetId(out int netId))
+			{
+				PacketSender.SendToAllClients(new Packets.World.OwnershipSyncPacket
+				{
+					NetId = netId,
+					OwnerId = OwnerId,
+					OwnedType = OwnedTypeRaw,
+					WorldId = WorldId,
+				});
+			}
+
+			return registered;
+		}
+
+		/// <summary>
+		/// Applies ownership the host decided, without announcing it again.
+		/// </summary>
+		/// <remarks>
+		/// Separate from <see cref="Assign"/> precisely so that receiving an update cannot be mistaken
+		/// for making one, which would bounce the packet back and forth.
+		/// </remarks>
+		public bool ApplyRemote(PlayerId owner, OwnershipType type, int worldId)
+		{
+			using var _ = Profiler.Scope();
+
+			OwnerId = owner.Value;
+			OwnedTypeRaw = (byte)type;
+			WorldId = worldId;
+
+			return PublishToRegistry("sync");
 		}
 
 		/// <summary>Clears ownership, leaving the object unowned.</summary>
