@@ -50,12 +50,56 @@ try {
 
     $hash = (Get-FileHash (Join-Path $deploy 'ONI_Together.dll') -Algorithm SHA256).Hash
 
+    # Publish to the download branch as part of deploying, not as a step to remember. The two
+    # machines have to run the same build, and a stale second PC presents as a broken feature.
+    # git writes progress to stderr, which PowerShell turns into terminating errors under
+    # ErrorActionPreference=Stop. Relax it for this block rather than redirecting, since redirecting
+    # a native command's stderr is what wraps those lines in ErrorRecords in the first place.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+
+    $wt = Join-Path $env:TEMP 'oni-dist-wt'
+    if (Test-Path $wt) { & git worktree remove --force $wt | Out-Null }
+    & git worktree prune | Out-Null
+    & git worktree add --detach $wt | Out-Null
+    Push-Location $wt
+    try {
+        & git checkout -B dist-testpc | Out-Null
+        Get-ChildItem $wt -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
+        Copy-Item (Join-Path $stage '*') $wt -Recurse -Force
+        Set-Content (Join-Path $wt 'README.md') @"
+# Test PC package
+
+Built mod for the second test machine. Binaries live here on purpose so a
+machine with no build tooling can install from a zip. Replaced wholesale on
+every deploy - whatever is here is the current build.
+
+    $stamp
+
+## Install
+
+1. Download and extract this branch
+2. Close Oxygen Not Included
+3. Run ``install-mod.bat``
+4. Check the printed build line matches the host
+"@ -Encoding utf8
+        & git add -f . | Out-Null
+        & git -c user.name='mkt-henry' -c user.email='bpark0718@gmail.com' commit -q -m "dist: $stamp" | Out-Null
+        & git push -f -q origin dist-testpc | Out-Null
+    }
+    finally {
+        Pop-Location
+        & git worktree remove --force $wt | Out-Null
+        $ErrorActionPreference = $previousPreference
+    }
+
     Write-Host ''
     Write-Host '---------------------------------------------------------------'
     Write-Host "  build   $stamp"
     Write-Host "  sha256  $hash"
     Write-Host "  deploy  $deploy"
     Write-Host "  package $stage"
+    Write-Host '  testpc  https://github.com/mkt-henry/oni-multi-mod/archive/refs/heads/dist-testpc.zip'
     Write-Host '---------------------------------------------------------------'
 }
 finally {
